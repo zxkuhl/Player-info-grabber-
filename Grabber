@@ -1,0 +1,17 @@
+print("----- PLAYER INFO START -----")
+        for _, v in pairs(Players:GetPlayers()) do
+            print("DisplayName:", v.DisplayName)
+            print("Username:", v.Name)
+            if v.Character and v.Character:FindFirstChild("Humanoid") then
+                print("Health:", v.Character.Humanoid.Health)
+                print("WalkSpeed:", v.Character.Humanoid.WalkSpeed)
+                print("JumpPower:", v.Character.Humanoid.JumpPower)
+            else
+                print("Character data unavailable")
+            end
+            print("UserId:", v.UserId)
+            print("Account Age:", v.AccountAge)
+            print("----------------------------------------")
+            task.wait(0.5)
+        end
+        print("----- PLAYER INFO END -----")
