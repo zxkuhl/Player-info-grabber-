@@ -1,3 +1,6 @@
+--[[
+	WARNING: Heads up! This script has not been verified by ScriptBlox. Use at your own risk!
+]]
 -- PLAYER INFO GRABBER
 -- IF IT SAYS IN CONSOLE HUMANOIDROOTPART DOENST EXIST THEN ITS BECAUSE THE USER IS USING AN ANIMATION SCRIPT
 
@@ -23,30 +26,370 @@ elseif mode == "advanced" then
     for i,v in pairs(game.Players:GetChildren()) do -- getting children inside the Players folder
         print("DisplayName: ", v.DisplayName) -- Grabbing DisplayName
         print("Username: ", v.Name) -- Grabbing Username
-                print("Health: ", v.Character.Humanoid.Health) -- Grabbing Health
-                print("UserID: ", v.UserId)
-                print("Account Age: ", v.AccountAge)
-                print("----------------------------------------")
-                wait(1)
+        -- safe humanoid access
+        local ok, hum = pcall(function() return v.Character and v.Character:FindFirstChildOfClass("Humanoid") end)
+        if ok and hum then
+            print("Health: ", hum.Health) -- Grabbing Health
+        else
+            print("Health: N/A")
+        end
+        print("UserID: ", v.UserId)
+        print("Account Age: ", v.AccountAge)
+        print("----------------------------------------")
+        wait(1)
     end
+
 elseif mode == "dev" then
-    for i,v in pairs(game.Players:GetChildren()) do -- getting children inside the Players folder
-        print("DisplayName: ", v.DisplayName) -- Grabbing DisplayName
-        print("Username: ", v.Name) -- Grabbing Username
-                print("Health: ", v.Character.Humanoid.Health) -- Grabbing Health
-                print("JumpPower: ", v.Character.Humanoid.JumpPower) -- Grabbing JumpPower
-                print("WalkSpeed: ", v.Character.Humanoid.WalkSpeed) -- Grabbing WalkSpeed
-                print("HipHeight: ", v.Character.Humanoid.HipHeight) -- Grabbing HipHeight
-                print("MaxHealth: ", v.Character.Humanoid.MaxHealth) -- Grabbing MaxHealth
-                print("CFrame: ", v.Character.HumanoidRootPart.CFrame) -- Grabbing CFrame
-                print("Sitted: ", v.Character.Humanoid.Sit) -- Checking if humanoid sit value is true
-                print("User ID: ", v.UserId)
-                print("Account Age: ", v.AccountAge)
-                print("----------------------------------------")
-                wait(1)
+    -- ULTIMATE DEV (LocalScript-style)
+    local Players = game:GetService("Players")
+    local RunService = game:GetService("RunService")
+    local Stats = game:GetService("Stats")
+    local UserInputService = game:GetService("UserInputService")
+    local Workspace = game:GetService("Workspace")
+
+    local LocalPlayer = Players.LocalPlayer
+    local camera = Workspace.CurrentCamera
+    local serverStart = os.time()
+
+    -- Helper safe pcall getter
+    local function safeGet(fn)
+        local ok, res = pcall(fn)
+        if ok then return res end
+        return nil
     end
+
+    ----------------------------------------------------------------
+    -- DEVICE DETECTION
+    ----------------------------------------------------------------
+    local function detectDevice()
+        if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+            return "Mobile"
+        elseif UserInputService.TouchEnabled and UserInputService.KeyboardEnabled then
+            return "Tablet"
+        elseif UserInputService.GamepadEnabled and not UserInputService.KeyboardEnabled then
+            return "Console"
+        elseif UserInputService.KeyboardEnabled then
+            return "PC"
+        else
+            return "Unknown"
+        end
+    end
+
+    ----------------------------------------------------------------
+    -- FPS CALCULATOR
+    ----------------------------------------------------------------
+    local lastTick = tick()
+    local fps = 0
+    RunService.RenderStepped:Connect(function()
+        local now = tick()
+        local dt = now - lastTick
+        if dt > 0 then fps = math.floor(1 / dt) end
+        lastTick = now
+    end)
+
+    ----------------------------------------------------------------
+    -- SPEED TRACKER (studs per second)
+    ----------------------------------------------------------------
+    local function getSpeed(root)
+        if not root then return 0 end
+        return math.floor(root.Velocity.Magnitude)
+    end
+
+    ----------------------------------------------------------------
+    -- SIMPLE REGION / ZONE DETECTION (nearest named part prefixed by "Zone_")
+    ----------------------------------------------------------------
+    local function detectZone(position, radius)
+        radius = radius or 200
+        local nearestName = "None"
+        local nearestDist = math.huge
+        for _, part in ipairs(Workspace:GetDescendants()) do
+            if part:IsA("BasePart") and part.Name:match("^Zone_") then
+                local d = (part.Position - position).Magnitude
+                if d < nearestDist and d <= radius then
+                    nearestDist = d
+                    nearestName = part.Name
+                end
+            end
+        end
+        if nearestDist == math.huge then return "None", nil end
+        return nearestName, math.floor(nearestDist)
+    end
+
+    ----------------------------------------------------------------
+    -- NOCLIP DETECTOR (heuristic)
+    ----------------------------------------------------------------
+    local function isNoclipping(char)
+        if not char then return false end
+        local parts = 0
+        local nonCollide = 0
+        for _, p in ipairs(char:GetDescendants()) do
+            if p:IsA("BasePart") then
+                parts = parts + 1
+                if p.CanCollide == false then nonCollide = nonCollide + 1 end
+            end
+        end
+        if parts == 0 then return false end
+        return (nonCollide / parts) > 0.6
+    end
+
+    ----------------------------------------------------------------
+    -- INVISIBLE DETECTOR (heuristic)
+    ----------------------------------------------------------------
+    local function isInvisible(char)
+        if not char then return false end
+        local parts = 0
+        local transparent = 0
+        for _, p in ipairs(char:GetDescendants()) do
+            if p:IsA("BasePart") then
+                parts = parts + 1
+                if p.Transparency >= 0.99 then transparent = transparent + 1 end
+            end
+        end
+        if parts == 0 then return false end
+        return (transparent / parts) > 0.75
+    end
+
+    ----------------------------------------------------------------
+    -- TOOL / BACKPACK LIST
+    ----------------------------------------------------------------
+    local function listTools(player)
+        local out = {}
+        pcall(function()
+            local bp = player:FindFirstChildOfClass("Backpack")
+            if bp then
+                for _, it in ipairs(bp:GetChildren()) do
+                    if it:IsA("Tool") then out[#out+1] = it.Name end
+                end
+            end
+            local char = player.Character
+            if char then
+                for _, it in ipairs(char:GetChildren()) do
+                    if it:IsA("Tool") then out[#out+1] = "(Equipped) "..it.Name end
+                end
+            end
+        end)
+        return out
+    end
+
+    ----------------------------------------------------------------
+    -- ANIMATION LIST
+    ----------------------------------------------------------------
+    local function listAnimations(hum)
+        local out = {}
+        if not hum then return out end
+        local ok, tracks = pcall(function() return hum:GetPlayingAnimationTracks() end)
+        if ok and tracks then
+            for _, t in ipairs(tracks) do
+                local id = "Unknown"
+                pcall(function() id = tostring(t.Animation and t.Animation.AnimationId or id) end)
+                out[#out+1] = id
+            end
+        end
+        return out
+    end
+
+    ----------------------------------------------------------------
+    -- SIMPLE TELEPORT/TELEPORT-HEURISTIC (large move)
+    ----------------------------------------------------------------
+    local lastPos = {}
+    local function detectTeleport(player, root)
+        if not root or not player then return false end
+        local uid = player.UserId
+        local prev = lastPos[uid]
+        lastPos[uid] = root.Position
+        if prev then
+            local d = (root.Position - prev).Magnitude
+            if d > 200 then return true end
+        end
+        return false
+    end
+
+    ----------------------------------------------------------------
+    -- INJECTOR / SUSPICIOUS SCRIPT NAME SCAN (heuristic)
+    ----------------------------------------------------------------
+    local suspiciousNames = {"injector","exploit","syn","krnl","flux","elysian","scriptware","cmd","recoil"}
+    local function detectSuspiciousScripts(player)
+        local found = {}
+        pcall(function()
+            for _, containerName in ipairs({"PlayerScripts", "PlayerGui"}) do
+                local container = player:FindFirstChild(containerName)
+                if container then
+                    for _, obj in ipairs(container:GetDescendants()) do
+                        if obj:IsA("LocalScript") or obj:IsA("ModuleScript") then
+                            local nm = (obj.Name or ""):lower()
+                            for _, s in ipairs(suspiciousNames) do
+                                if nm:match(s) then
+                                    found[#found+1] = obj:GetFullName()
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+        return found
+    end
+
+    ----------------------------------------------------------------
+    -- GET PING (safe)
+    ----------------------------------------------------------------
+    local function getPing()
+        local ping = "N/A"
+        pcall(function()
+            local item = Stats.Network.ServerStatsItem and Stats.Network.ServerStatsItem:FindFirstChild("Data Ping")
+            if item and type(item.GetValue) == "function" then
+                ping = math.floor(item:GetValue())
+            end
+        end)
+        return ping
+    end
+
+    ----------------------------------------------------------------
+    -- MAIN SCAN LOOP (prints to console)
+    ----------------------------------------------------------------
+    spawn(function()
+        while true do
+            for _, player in ipairs(Players:GetPlayers()) do
+                print("----- PLAYER:", player.DisplayName or player.Name, "(", player.Name, ") -----")
+
+                print("UserID:", player.UserId)
+                print("Account Age (days):", player.AccountAge or "N/A")
+                print("Team:", (player.Team and player.Team.Name) or "None")
+                print("TeamColor:", (player.TeamColor and player.TeamColor.Name) or "None")
+
+                local char = safeGet(function() return player.Character end)
+                local hum = safeGet(function() if char then return char:FindFirstChildOfClass("Humanoid") end end)
+                local root = safeGet(function() if char then return char:FindFirstChild("HumanoidRootPart") end end)
+
+                -- Humanoid stats
+                if hum then
+                    print("Health:", hum.Health, " / MaxHealth:", hum.MaxHealth)
+                    print("WalkSpeed:", hum.WalkSpeed, " JumpPower:", hum.JumpPower)
+                    print("HipHeight:", hum.HipHeight)
+                    print("Humanoid State:", tostring(hum:GetState()))
+                    print("FloorMaterial:", tostring(hum.FloorMaterial))
+
+                    local anims = listAnimations(hum)
+                    if #anims > 0 then
+                        print("Animations:")
+                        for _, a in ipairs(anims) do print(" -", a) end
+                    else
+                        print("Animations: NONE")
+                    end
+                else
+                    print("Humanoid: NOT FOUND")
+                end
+
+                -- Position/movement
+                if root then
+                    local pos = root.Position
+                    print("Coords: X="..math.floor(pos.X).." | Y="..math.floor(pos.Y).." | Z="..math.floor(pos.Z))
+                    print("CFrame:", root.CFrame)
+                    print("Rotation (Orientation):", root.Orientation)
+                    print("Velocity:", ("%.2f, %.2f, %.2f"):format(root.Velocity.X, root.Velocity.Y, root.Velocity.Z))
+                    print("Speed (SPS):", getSpeed(root))
+                    print("MoveDirection:", hum and hum.MoveDirection or "NONE")
+                    print("Hitbox Size:", root.Size)
+
+                    -- Distance from local player
+                    if LocalPlayer and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                        local myPos = LocalPlayer.Character.HumanoidRootPart.Position
+                        print("Distance from you:", math.floor((pos - myPos).Magnitude))
+                    end
+
+                    -- Zone detection (nearest Zone_ part)
+                    local zoneName, zoneDist = detectZone(pos)
+                    if zoneDist then
+                        print("Zone:", zoneName, "("..zoneDist.." studs)")
+                    else
+                        print("Zone:", zoneName)
+                    end
+
+                    -- Teleport heuristic
+                    if detectTeleport(player, root) then print("Teleport/large move detected: YES") end
+                else
+                    print("HumanoidRootPart: MISSING")
+                end
+
+                -- Tools & backpack
+                local tools = listTools(player)
+                if #tools > 0 then
+                    print("Tools/Backpack:")
+                    for _, t in ipairs(tools) do print(" -", t) end
+                else
+                    print("Tools: NONE")
+                end
+
+                -- Device / input (local player only)
+                if player == LocalPlayer then
+                    print("Device Type:", detectDevice())
+                    print("Touch Enabled:", UserInputService.TouchEnabled)
+                    print("Keyboard Enabled:", UserInputService.KeyboardEnabled)
+                    print("Mouse Enabled:", UserInputService.MouseEnabled)
+                    print("Gamepad Enabled:", UserInputService.GamepadEnabled)
+                end
+
+                -- Performance & memory
+                print("FPS:", fps)
+                print("Ping (ms):", getPing())
+                print("Total Memory (MB):", safeGet(function() return math.floor(Stats:GetTotalMemoryUsageMb()) end) or "N/A")
+                pcall(function()
+                    print("Memory Script (MB):", math.floor(Stats:GetMemoryUsageMbForTag("Script")))
+                    print("Memory Physics (MB):", math.floor(Stats:GetMemoryUsageMbForTag("Physics")))
+                    print("Memory Terrain (MB):", math.floor(Stats:GetMemoryUsageMbForTag("Terrain")))
+                end)
+
+                -- Camera
+                if camera then
+                    print("Camera LookVector:", camera.CFrame.LookVector)
+                end
+
+                -- Network I/O
+                pcall(function()
+                    local recv = Stats.Network.ServerStatsItem["Data Receive"]:GetValue()
+                    local send = Stats.Network.ServerStatsItem["Data Send"]:GetValue()
+                    print("Data Receive (kb/s):", math.floor(recv))
+                    print("Data Send (kb/s):", math.floor(send))
+                end)
+
+                -- Noclip / invisible heuristics
+                print("Noclip Heuristic:", isNoclipping(char) and "YES" or "NO")
+                print("Invisible Heuristic:", isInvisible(char) and "YES" or "NO")
+
+                -- Suspicious scripts/injectors
+                local inj = detectSuspiciousScripts(player)
+                if #inj > 0 then
+                    print("Suspicious Scripts Found:")
+                    for _, f in ipairs(inj) do print(" -", f) end
+                else
+                    print("Suspicious Scripts: NONE")
+                end
+
+                -- Equipped tool
+                local equipped = char and char:FindFirstChildOfClass("Tool")
+                print("Equipped Tool:", equipped and equipped.Name or "None")
+
+                -- Camera / direction
+                if camera then
+                    print("Camera CFrame:", tostring(camera.CFrame))
+                end
+
+                -- Exploit heuristics
+                local suspected = false
+                if hum then
+                    if hum.WalkSpeed and hum.WalkSpeed > 32 then suspected = true end
+                    if hum.JumpPower and hum.JumpPower > 100 then suspected = true end
+                    if hum.MaxHealth and hum.MaxHealth > 1000 then suspected = true end
+                end
+                if root and detectTeleport(player, root) then suspected = true end
+                print("Exploit Suspected:", suspected and "YES" or "NO")
+
+                -- Extra info
+                print("Server Uptime (s):", os.time() - serverStart)
+                print("----------------------------------------")
+            end
+
+            wait(60) -- scan interval
+        end
+    end)
 end
-
-
-
-      
